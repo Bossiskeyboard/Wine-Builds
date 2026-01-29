@@ -12,10 +12,16 @@ jobs:
       matrix:
         include:
           - build_type: "release"
-            
     name: Build Wine (${{ matrix.build_type }})
     steps:
       - uses: actions/checkout@v4
+
+      - name: Debug environment
+        run: |
+          echo "Repository root contents:"
+          ls -la
+          echo "build.sh exists:"
+          ls -la build.sh || echo "build.sh not found"
 
       - name: Restore ccache
         id: ccache-restore
@@ -35,6 +41,17 @@ jobs:
           chmod +x build.sh
           ./build.sh
 
+      - name: Debug build output
+        if: always()
+        run: |
+          echo "=== After build.sh ==="
+          echo "Root directory:"
+          ls -la
+          echo "All tar.xz files:"
+          find . -name "*.tar.xz" -type f || echo "No .tar.xz files found"
+          echo "Common build directories:"
+          ls -la dist/ out/ build/ 2>/dev/null || echo "No common dirs found"
+
       - name: Save ccache
         if: always()
         uses: actions/cache/save@v4
@@ -43,10 +60,18 @@ jobs:
           key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
       - name: Upload Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: spritz-wine-${{ matrix.build_type }}
-          path: ./*.tar.xz
+          path: |
+            ./*.tar.xz
+            dist/*.tar.xz
+            out/*.tar.xz
+            build/*.tar.xz
+            wine-*.tar.xz
+          if-no-files-found: warn
+          retention-days: 30
 
   release:
     runs-on: ubuntu-latest
@@ -59,16 +84,27 @@ jobs:
           name: spritz-wine-release
           path: ./artifacts/
 
+      - name: Debug downloaded artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          ls -la ./artifacts/
+          ls -la ./artifacts/**/*.tar.xz 2>/dev/null || echo "No tar.xz in subdirs"
+
       - name: Extract version from tag
         id: extract_version
         run: |
           TAG="${{ github.ref_name }}"
           VERSION=$(echo "$TAG" | sed -n 's/^wine-tkg-aagl-\(v[0-9]\+\.[0-9]\+-[0-9]\+\)$/\1/p')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if [ -z "$VERSION" ]; then
+            echo "version=unknown" >> $GITHUB_OUTPUT
+          else
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2.2.1
         with:
-          files: ./artifacts/*.tar.xz
+          files: |
+            ./artifacts/**/*.tar.xz
           name: "Spritz-Wine-TkG-AAGL-${{ steps.extract_version.outputs.version }}"
           make_latest: true
